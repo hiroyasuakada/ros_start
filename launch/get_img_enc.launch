@@ -1,0 +1,4 @@
+<launch>
+  <node pkg='ros_start' name='talker' type='talker.py'/>
+  <node pkg='ros_start' name='get_img_enc' type='get_omg_enc' output='screen'/>
+</launch>
