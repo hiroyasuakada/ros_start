@@ -31,12 +31,11 @@ class Converter:
         except CvBridgeError as e:
             print(e)
 
-        cv2.imwrite('./single_image' + '/' + str(self.index) + '.jpg', self.single_image)
         self.index += 1
+        cv2.imwrite('./video_to_image/new_file' + '/' + str(self.index) + '.jpg', self.single_image)
 
         # save encoder corresponding to current image
         self.syn_encoder.append(self.encoder)
-
         position_x, position_y, orientation_z, orientation_w = self.value_encoder(self.encoder)
         position_x_diff, position_y_diff, orientation_z_diff, orientation_w_diff \
             = self.diff_value_encoder(self.syn_encoder)
