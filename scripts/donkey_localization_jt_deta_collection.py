@@ -43,8 +43,16 @@ from	geometry_msgs.msg	import PoseWithCovariance
 from	geometry_msgs.msg	import PoseWithCovarianceStamped
 from	geometry_msgs.msg	import TransformStamped
 from	nav_msgs.msg		import Odometry
-import csv
 
+# ============================================================================ #
+#                     Import to get image and enc (Hiro)                       #
+# ============================================================================ #
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
+import cv2
+import csv
+import os
+import threading
 
 
 ################################################################################
@@ -100,6 +108,9 @@ class Localization:
 		self.p_x_old		= 0.0
 		self.p_y_old		= 0.0
 
+		# constructor (Hiro)
+		self.the_yaw = 0.0
+		self.count_update = 0
 
 	#===========================================================================
 	#   Initialize Header, Frame, Pose
@@ -148,6 +159,10 @@ class Localization:
 		# TF Broadchaster
 		self.tf_bc	= tf.TransformBroadcaster()
 
+		# theta_integration (Hiro)
+		self.the_yaw = 0.0
+		self.count_update = 0
+
 
 	#===========================================================================
 	#   ResetPose	
@@ -177,6 +192,9 @@ class Localization:
 	#   Pose Update with ⊿x,⊿y,⊿θ(ENC, IMU)
 	#===========================================================================
 	def pUpdate(self, in_dp):
+
+		self.count_update = 1
+
 		the_orientation = (
 			copy.deepcopy(self.p.pose.pose.orientation.x),
 			copy.deepcopy(self.p.pose.pose.orientation.y),
@@ -186,36 +204,39 @@ class Localization:
 		the_rpy	= tf.transformations.euler_from_quaternion(the_orientation)		# ※tuple
 		the_roll	= copy.deepcopy(the_rpy[0])
 		the_pitch	= copy.deepcopy(the_rpy[1])
-		the_yaw		= copy.deepcopy(the_rpy[2])
+		self.the_yaw		= copy.deepcopy(the_rpy[2])
 
 		# Update position x,y
-		self.p.pose.pose.position.x		+= (in_dp.x*math.cos(the_yaw) - in_dp.y*math.sin(the_yaw))
-		self.p.pose.pose.position.y		+= (in_dp.x*math.sin(the_yaw) + in_dp.y*math.cos(the_yaw))
+		self.p.pose.pose.position.x	+= (in_dp.x*math.cos(self.the_yaw) - in_dp.y*math.sin(self.the_yaw))
+		self.p.pose.pose.position.y	+= (in_dp.x*math.sin(self.the_yaw) + in_dp.y*math.cos(self.the_yaw))
 
-		print " d_x:", in_dp.x, "  d_yaw:", in_dp.theta
+		print 'update_count', self.count_update, "  d_yaw:", in_dp.theta, "   d_x:", in_dp.x
 		# print "current yaw:", the_yaw, "  d_yaw:", in_dp.theta, " d_x:", in_dp.x, " d_y:", in_dp.y
 
 		# Update yaw
-		the_yaw		+= in_dp.theta
+		self.the_yaw += in_dp.theta
+
 		#the_yaw		= limitAnglePi(the_yaw)
-		the_q		= tf.transformations.quaternion_from_euler(the_roll, the_pitch, the_yaw)
+		the_q = tf.transformations.quaternion_from_euler(the_roll, the_pitch, self.the_yaw)
 		self.p.pose.pose.orientation.x	= copy.deepcopy(the_q[0])
 		self.p.pose.pose.orientation.y	= copy.deepcopy(the_q[1])
 		self.p.pose.pose.orientation.z	= copy.deepcopy(the_q[2])
 		self.p.pose.pose.orientation.w	= copy.deepcopy(the_q[3])
 
-	def pUpdate_for_delta(self, in_dp):
 
-		# Update position x,y → delta_x, theta(d_yaw)
-		self.p_delta_x_theta.pose.pose.position.x = in_dp.x
-		self.p_delta_x_theta.pose.pose.position.y = in_dp.theta
 
-		# print " d_x:", in_dp.x, "  d_yaw:", in_dp.theta
-
-		# data = [in_dp.theta, in_dp.x]
-		# with open('./dataset_from_original/enc_enc_direct.csv', 'a') as f:
-		# 	writer = csv.writer(f)
-		# 	writer.writerow(data)
+	# def pUpdate_for_delta(self, in_dp):
+	#
+	# 	# Update position x,y → delta_x, theta(d_yaw)
+	# 	self.p_delta_x_theta.pose.pose.position.x = in_dp.x
+	# 	self.p_delta_x_theta.pose.pose.position.y = in_dp.theta
+	#
+	# 	# print " d_x:", in_dp.x, "  d_yaw:", in_dp.theta
+	#
+	# 	# data = [in_dp.theta, in_dp.x]
+	# 	# with open('./dataset_from_original/enc_enc_direct.csv', 'a') as f:
+	# 	# 	writer = csv.writer(f)
+	# 	# 	writer.writerow(data)"  d_yaw:", in_dp.theta
 
 
 	#===========================================================================
@@ -286,8 +307,11 @@ class DonkeyLocalization:
 	def __init__(self):
 		print "\n=============== Donkey Localization (Odom + IMU + GNSS) ===================="
 
+		# file creation (Hiro) -------------------------------------------------
+		os.mkdir('./dataset_from_original/new_file')
+
 		# Initialize node ------------------------------------------------------
-		rospy.init_node("donkey_localization")
+		rospy.init_node("donkey_localization_and_image_collection")
 
 		# Subscribed data ------------------------------------------------------
 		self.v_wheel		= [0.0, 0.0, 0.0, 0.0]			# LF,LR,RR,RF
@@ -307,21 +331,26 @@ class DonkeyLocalization:
 		self.p_gps			= geometry_msgs.msg.PoseWithCovarianceStamped()
 		self.t_gps			= rospy.get_time()
 
+		# constructor (Hiro)
+		self.cb = CvBridge()
+		self.single_image = None
+		self.index = 0
+		self.lock = threading.Lock()
 
 		# Estimated pose ------------------------------------------------------
 		self.odom_enc_enc	= Localization()
-		self.odom_enc_imu	= Localization()
-		self.odom_gps_enc	= Localization()
-		self.odom_gps_imu	= Localization()
-		self.odom_gpsxenc	= Localization()
+		# self.odom_enc_imu	= Localization()
+		# self.odom_gps_enc	= Localization()
+		# self.odom_gps_imu	= Localization()
+		# self.odom_gpsxenc	= Localization()
 
 
 		# Initialize Poses ---------------------------------------------
 		self.odom_enc_enc.initialize('/odom_enc_enc_2', '/base_footprint_ee')
-		self.odom_enc_imu.initialize('/odom_enc_imu', '/base_footprint_ei')
-		self.odom_gps_enc.initialize('/odom_gps_enc', '/base_footprint_ge')
-		self.odom_gps_imu.initialize('/odom_gps_imu', '/base_footprint_gi')
-		self.odom_gpsxenc.initialize('/odom_gpsxenc', '/base_footprint_gex')
+		# self.odom_enc_imu.initialize('/odom_enc_imu', '/base_footprint_ei')
+		# self.odom_gps_enc.initialize('/odom_gps_enc', '/base_footprint_ge')
+		# self.odom_gps_imu.initialize('/odom_gps_imu', '/base_footprint_gi')
+		# self.odom_gpsxenc.initialize('/odom_gpsxenc', '/base_footprint_gex')
 
 
 		self.p_gps.header.stamp		= rospy.Time()
@@ -329,78 +358,96 @@ class DonkeyLocalization:
 
 
 		# Subscriber --------------------------------------------------
-		self.imu_sub		= rospy.Subscriber('/imu/data', Imu, self.subImu)
-		self.sensinfo_sub	= rospy.Subscriber('/sensinfo', Float32MultiArray, self.subSensinfo)
-		self.gps_sub		= rospy.Subscriber('/donkey/gps', Float64MultiArray, self.subGps)
-		self.initialize_sub	= rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.resetPoses)
+		# self.imu_sub		= rospy.Subscriber('/imu/data', Imu, self.subImu)
+		# self.sensinfo_sub	= rospy.Subscriber('/sensinfo', Float32MultiArray, self.subSensinfo)
+		# self.gps_sub		= rospy.Subscriber('/donkey/gps', Float64MultiArray, self.subGps)
+		# self.initialize_sub	= rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.resetPoses)
 
+		# Subscriber (Hiro) -------------------------------------------
+		# self.sub_img = rospy.Subscriber('/front_realsense/color/image_raw', Image, self.subImg)
+		self.sensinfo_sub	= rospy.Subscriber('/sensinfo', Float32MultiArray, self.subsensinfo_lock)
+		self.sub_img = rospy.Subscriber('/front_realsense/color/image_raw', Image, self.subimg_lock)
 
 		# Publisher ----------------------------------------------------
-		self.gnss_map_pos_pub		= rospy.Publisher('/donkey/gps_map', PoseWithCovarianceStamped, queue_size=10)
+		# self.gnss_map_pos_pub		= rospy.Publisher('/donkey/gps_map', PoseWithCovarianceStamped, queue_size=10)
 
 		rospy.spin()
 
+	# #===============================================s===========================
+	# #   Lock threads
+	# #===========================================================================
+	def subsensinfo_lock(self, message):
+		with self.lock:
+			# print('Lock!')
+			self.subSensinfo(message)
+		# print('Unlock!')
 
-	#===============================================s===========================
-	#   Get Current IMU data
-	#===========================================================================
-	def subImu(self, in_imu):
+	def subimg_lock(self, message):
+		with self.lock:
+			# print('Lock_2!')
+			self.subImg(message)
+		# print('Unlock_2!')
 
-		the_t		= rospy.get_time()
-		the_dt		= the_t - self.t_imu	# dt[s]
-		self.t_imu	= copy.deepcopy(the_t)
-		the_dp_imu	= geometry_msgs.msg.Pose2D()
-
-		the_orientation = (
-			in_imu.orientation.x,
-			in_imu.orientation.y,
-			in_imu.orientation.z,
-			in_imu.orientation.w
-		)
-		the_rpy	= tf.transformations.euler_from_quaternion(the_orientation)
-
-		self.rpy_imu.x	= the_rpy[0]
-		self.rpy_imu.y	= the_rpy[1]
-		self.rpy_imu.z	= the_rpy[2]
-
-		if self.init_imu_flg == True:
-			self.rpy_imu_old.x	= the_rpy[0]
-			self.rpy_imu_old.y	= the_rpy[1]
-			self.rpy_imu_old.z	= the_rpy[2]
-			self.init_imu_flg	= False
-
-		self.d_rpy_imu.x	= self.rpy_imu.x - self.rpy_imu_old.x
-		self.d_rpy_imu.y	= self.rpy_imu.y - self.rpy_imu_old.y
-		self.d_rpy_imu.z	= self.rpy_imu.z - self.rpy_imu_old.z
-		self.rpy_imu_old	= copy.deepcopy(self.rpy_imu)
-
-		#print self.rpy_imu
-
-
-		#-------------------------------------------------------------------#
-		#							Update each Angle						#
-		#-------------------------------------------------------------------#
-		the_dp_imu.x		= 0.0
-		the_dp_imu.y		= 0.0
-		the_dp_imu.theta	= copy.deepcopy(self.d_rpy_imu.z)
-
-		# Enc_Imu
-	#	self.odom_enc_imu.pUpdate(the_dp_imu)
-
-		# Gps_Imu
-	#	self.odom_gps_imu.pUpdate(the_dp_imu)
-
-
-		#-------------------------------------------------------------------#
-		#					Publish and Broadcast each Pose					#
-		#-------------------------------------------------------------------#
-		# Enc-Imu
-		self.odom_enc_imu.odomPub()
-		self.odom_enc_imu.tfBc()
-
-		# Gps-Imu
-		self.odom_gps_imu.odomPub()
-		self.odom_gps_imu.tfBc()
+	# #===============================================s===========================
+	# #   Get Current IMU data
+	# #===========================================================================
+	# def subImu(self, in_imu):
+	#
+	# 	the_t		= rospy.get_time()
+	# 	the_dt		= the_t - self.t_imu	# dt[s]
+	# 	self.t_imu	= copy.deepcopy(the_t)
+	# 	the_dp_imu	= geometry_msgs.msg.Pose2D()
+	#
+	# 	the_orientation = (
+	# 		in_imu.orientation.x,
+	# 		in_imu.orientation.y,
+	# 		in_imu.orientation.z,
+	# 		in_imu.orientation.w
+	# 	)
+	# 	the_rpy	= tf.transformations.euler_from_quaternion(the_orientation)
+	#
+	# 	self.rpy_imu.x	= the_rpy[0]
+	# 	self.rpy_imu.y	= the_rpy[1]
+	# 	self.rpy_imu.z	= the_rpy[2]
+	#
+	# 	if self.init_imu_flg == True:
+	# 		self.rpy_imu_old.x	= the_rpy[0]
+	# 		self.rpy_imu_old.y	= the_rpy[1]
+	# 		self.rpy_imu_old.z	= the_rpy[2]
+	# 		self.init_imu_flg	= False
+	#
+	# 	self.d_rpy_imu.x	= self.rpy_imu.x - self.rpy_imu_old.x
+	# 	self.d_rpy_imu.y	= self.rpy_imu.y - self.rpy_imu_old.y
+	# 	self.d_rpy_imu.z	= self.rpy_imu.z - self.rpy_imu_old.z
+	# 	self.rpy_imu_old	= copy.deepcopy(self.rpy_imu)
+	#
+	# 	#print self.rpy_imu
+	#
+	#
+	# 	#-------------------------------------------------------------------#
+	# 	#							Update each Angle						#
+	# 	#-------------------------------------------------------------------#
+	# 	the_dp_imu.x		= 0.0
+	# 	the_dp_imu.y		= 0.0
+	# 	the_dp_imu.theta	= copy.deepcopy(self.d_rpy_imu.z)
+	#
+	# 	# Enc_Imu
+	# #	self.odom_enc_imu.pUpdate(the_dp_imu)
+	#
+	# 	# Gps_Imu
+	# #	self.odom_gps_imu.pUpdate(the_dp_imu)
+	#
+	#
+	# 	#-------------------------------------------------------------------#
+	# 	#					Publish and Broadcast each Pose					#
+	# 	#-------------------------------------------------------------------#
+	# 	# Enc-Imu
+	# 	self.odom_enc_imu.odomPub()
+	# 	self.odom_enc_imu.tfBc()
+	#
+	# 	# Gps-Imu
+	# 	self.odom_gps_imu.odomPub()
+	# 	self.odom_gps_imu.tfBc()
 
 
 	#===============================================s===========================
@@ -479,105 +526,178 @@ class DonkeyLocalization:
 		#-------------------------------------------------------------------#
 		# Enc-Enc
 		self.odom_enc_enc.odomPub()
-		self.odom_enc_enc.tfBc()
+		self.odom_enc_enc.tfBc()# #===============================================s===========================
+	# #   Get Current IMU data
+	# #===========================================================================
 
-		# Enc-Imu
-		self.odom_enc_imu.odomPub()
-		self.odom_enc_imu.tfBc()
+		# # Enc-Imu
+		# self.odom_enc_imu.odomPub()
+		# self.odom_enc_imu.tfBc()
+		#
+		# # Gps-Enc
+		# self.odom_gps_enc.odomPub()
+		# self.odom_gps_enc.tfBc()
+		#
+		# # GpsxEnc
+		# self.odom_gpsxenc.odomPub()
+		# self.odom_gpsxenc.tfBc()
 
-		# Gps-Enc
-		self.odom_gps_enc.odomPub()
-		self.odom_gps_enc.tfBc()
+	# ===============================================s===========================
+	#   Get Current images (Hiro)
+	# ===========================================================================
+	def subImg(self, in_img):
+		# save image
+		try:
+			self.single_image = self.cb.imgmsg_to_cv2(in_img, 'bgr8')
+		except CvBridgeError as e:
+			print(e)
 
-		# GpsxEnc
-		self.odom_gpsxenc.odomPub()
-		self.odom_gpsxenc.tfBc()
+		self.index += 1
 
+		cv2.imwrite('./dataset_from_original/new_file' + '/' + str(self.index) + '.jpg', self.single_image)
 
-	#===============================================s===========================
-	#   Get Current Gps data
-	#===========================================================================
-	def subGps(self, in_gps):
+		# save encoder corresponding to current image
+		position_theta_integration, position_x_integration, position_y_integration, \
+		orientation_z_integration, orientation_w_integration, update_count = self.value_message(self.odom_enc_enc)
 
-		the_t		= rospy.get_time()
-		the_dt		= the_t - self.t_gps	# dt[s]
-		self.t_gps	= copy.deepcopy(the_t)
-		the_p_gps	= geometry_msgs.msg.Pose2D()
+		# header
+		# A: 'num_to img & position', B: 'position_theta_integration'
+		#    C: 'position_x_integration', D: 'position_y_integration',
+		#       E: 'orientation_z_integration', F: 'orientation_w_integration', G; 'update' (0 or 1)
 
+		data = [update_count, self.index, position_theta_integration,
+				position_x_integration, position_y_integration,
+				orientation_z_integration, orientation_w_integration]
 
-		self.gnss_lat	= copy.deepcopy(in_gps.data[2])
-		self.gnss_lon	= copy.deepcopy(in_gps.data[3])
-		self.gnss_h		= copy.deepcopy(in_gps.data[4])
-		self.gnss_stat	= copy.deepcopy(in_gps.data[5])	# 状態1:Fix, 2:Float, 5:Sigle
-		self.gnss_hdop	= copy.deepcopy(in_gps.data[13])
+		with open('./dataset_from_original/position_integration.csv', 'a') as f:
+			writer = csv.writer(f)
+			writer.writerow(data)
 
-		self.p_gps.pose.pose.position.x	= self.lon2MeterX(self.gnss_lat, self.gnss_lon) 
-		self.p_gps.pose.pose.position.y	= self.lat2MeterY(self.gnss_lat)
-		self.p_gps.pose.pose.position.z	= 0.0
-		for i in range(36):
-			self.p_gps.pose.covariance[i]	= 0.0
-		self.p_gps.pose.covariance[0]	= in_gps.data[7]**2.0
-		self.p_gps.pose.covariance[7]	= in_gps.data[8]**2.0
-		self.p_gps.pose.covariance[1]	= self.gnss_hdop**2.0
-		self.p_gps.pose.covariance[6]	= self.gnss_hdop**2.0
-		self.p_gps.pose.covariance[35]	= INITIAL_COV_YAW
-
-
-		# Publish
-		self.gnss_map_pos_pub.publish(self.p_gps)
-		#print self.p_gps
-
-
-
-
-		#-------------------------------------------------------------------#
-		#							Update each Pose						#
-		#-------------------------------------------------------------------#
-		the_p_gps.x		= copy.deepcopy(self.p_gps.pose.pose.position.x)
-		the_p_gps.y		= copy.deepcopy(self.p_gps.pose.pose.position.y)
-		the_p_gps.theta	= 0.0
-		# Gps-Enc
-	#	self.odom_gps_enc.pUpdateGps(the_p_gps)
-
-		# Gps-Imu
-	#	self.odom_gps_imu.pUpdateGps(the_p_gps)
-
-		# GpsxEnc 水平精度1.0m以下，Fix/Float解以上
-		#if(self.gnss_hdop < 1.0 and self.gnss_stat < 3):
-		#if(self.gnss_hdop < 3.5 and self.gnss_stat < 6):
-	#	self.odom_gpsxenc.pUpdateGps(the_p_gps)
-
-		# 移動量がある程度ある場合は移動方向＝姿勢角：今回は使わない
-		#if self.gnss_hdop < 0.25 and self.odom_gpsxenc.trust_flg==True:
-		#	the_dist	= math.sqrt((self.odom_gpsxenc.p_x_old-the_p_gps.x)**2.0 + (self.odom_gpsxenc.p_y_old-the_p_gps.y)**2.0)
-		#	if the_dist > 0.5 and the_dist < 1.2:
-		#		the_p_gps.theta	= math.atan2(self.odom_gpsxenc.p_y_old-the_p_gps.y, self.odom_gpsxenc.p_x_old-the_p_gps.x)
-		#		self.odom_gpsxenc.yawUpdateGps(the_p_gps)
+		# initialize odom_enc_enc
+		self.odom_enc_enc.initialize('/odom_enc_enc_2', '/base_footprint_ee')
 
 
-		#-------------------------------------------------------------------#
-		#					Publish and Broadcast each Pose					#
-		#-------------------------------------------------------------------#
-		# Gps_Enc
-		self.odom_gps_enc.odomPub()
-		self.odom_gps_enc.tfBc()
+	@staticmethod
+	def value_message(message):
+		position_theta = message.the_yaw
+		position_x = message.p.pose.pose.position.x
+		position_y = message.p.pose.pose.position.y
+		orientation_z = message.p.pose.pose.orientation.z
+		orientation_w = message.p.pose.pose.orientation.w
+		update_count = message.count_update
 
-		# Gps-Imu
-		self.odom_gps_imu.odomPub()
-		self.odom_gps_imu.tfBc()
+		return position_theta, position_x, position_y, orientation_z, orientation_w, update_count
 
-		# GpsxEnc
-		self.odom_gpsxenc.odomPub()
-		self.odom_gpsxenc.tfBc()
+	# @staticmethod
+	# def diff_value_encoder(message_list, message):
+	# 	if message is not None:
+	# 		if len(message_list) == 1:
+	# 			position_x_diff = 0
+	# 			position_y_diff = 0
+	# 			orientation_z_diff = 0
+	# 			orientation_w_diff = 0
+	#
+	# 		elif message_list[-1] and message_list[-2] is not None:
+	# 			position_x_diff = message_list[-1].pose.pose.position.x - message_list[-2].pose.pose.position.x
+	# 			position_y_diff = message_list[-1].pose.pose.position.y - message_list[-2].pose.pose.position.y
+	# 			orientation_z_diff = message_list[-1].pose.pose.orientation.z - message_list[-2].pose.pose.orientation.z
+	# 			orientation_w_diff = message_list[-1].pose.pose.orientation.w - message_list[-2].pose.pose.orientation.w
+	#
+	# 		else:
+	# 			position_x_diff = ' - '
+	# 			position_y_diff = ' - '
+	# 			orientation_z_diff = ' - '
+	# 			orientation_w_diff = ' - '
+	#
+	# 	else:
+	# 		position_x_diff = ' - '
+	# 		position_y_diff = ' - '
+	# 		orientation_z_diff = ' - '
+	# 		orientation_w_diff = ' - '
+	#
+	# 	return position_x_diff, position_y_diff, orientation_z_diff, orientation_w_diff
 
 
-
-		if self.gnss_hdop < 0.25:
-			self.odom_gpsxenc.trust_flg	= True
-			self.odom_gpsxenc.p_x_old	= copy.deepcopy(the_p_gps.x)
-			self.odom_gpsxenc.p_y_old	= copy.deepcopy(the_p_gps.y)
-		else:
-			self.odom_gpsxenc.trust_flg	= False
+	# #===============================================s===========================
+	# #   Get Current Gps data
+	# #===========================================================================
+	# def subGps(self, in_gps):
+	#
+	# 	the_t		= rospy.get_time()
+	# 	the_dt		= the_t - self.t_gps	# dt[s]
+	# 	self.t_gps	= copy.deepcopy(the_t)
+	# 	the_p_gps	= geometry_msgs.msg.Pose2D()
+	#
+	#
+	# 	self.gnss_lat	= copy.deepcopy(in_gps.data[2])
+	# 	self.gnss_lon	= copy.deepcopy(in_gps.data[3])
+	# 	self.gnss_h		= copy.deepcopy(in_gps.data[4])
+	# 	self.gnss_stat	= copy.deepcopy(in_gps.data[5])	# 状態1:Fix, 2:Float, 5:Sigle
+	# 	self.gnss_hdop	= copy.deepcopy(in_gps.data[13])
+	#
+	# 	self.p_gps.pose.pose.position.x	= self.lon2MeterX(self.gnss_lat, self.gnss_lon)
+	# 	self.p_gps.pose.pose.position.y	= self.lat2MeterY(self.gnss_lat)
+	# 	self.p_gps.pose.pose.position.z	= 0.0
+	# 	for i in range(36):
+	# 		self.p_gps.pose.covariance[i]	= 0.0
+	# 	self.p_gps.pose.covariance[0]	= in_gps.data[7]**2.0
+	# 	self.p_gps.pose.covariance[7]	= in_gps.data[8]**2.0
+	# 	self.p_gps.pose.covariance[1]	= self.gnss_hdop**2.0
+	# 	self.p_gps.pose.covariance[6]	= self.gnss_hdop**2.0
+	# 	self.p_gps.pose.covariance[35]	= INITIAL_COV_YAW
+	#
+	#
+	# 	# Publish
+	# 	self.gnss_map_pos_pub.publish(self.p_gps)
+	# 	#print self.p_gps
+	#
+	#
+	# 	#-------------------------------------------------------------------#
+	# 	#							Update each Pose						#
+	# 	#-------------------------------------------------------------------#
+	# 	the_p_gps.x		= copy.deepcopy(self.p_gps.pose.pose.position.x)
+	# 	the_p_gps.y		= copy.deepcopy(self.p_gps.pose.pose.position.y)
+	# 	the_p_gps.theta	= 0.0
+	# 	# Gps-Enc
+	# #	self.odom_gps_enc.pUpdateGps(the_p_gps)
+	#
+	# 	# Gps-Imu
+	# #	self.odom_gps_imu.pUpdateGps(the_p_gps)
+	#
+	# 	# GpsxEnc 水平精度1.0m以下，Fix/Float解以上
+	# 	#if(self.gnss_hdop < 1.0 and self.gnss_stat < 3):
+	# 	#if(self.gnss_hdop < 3.5 and self.gnss_stat < 6):
+	# #	self.odom_gpsxenc.pUpdateGps(the_p_gps)
+	#
+	# 	# 移動量がある程度ある場合は移動方向＝姿勢角：今回は使わない
+	# 	#if self.gnss_hdop < 0.25 and self.odom_gpsxenc.trust_flg==True:
+	# 	#	the_dist	= math.sqrt((self.odom_gpsxenc.p_x_old-the_p_gps.x)**2.0 + (self.odom_gpsxenc.p_y_old-the_p_gps.y)**2.0)
+	# 	#	if the_dist > 0.5 and the_dist < 1.2:
+	# 	#		the_p_gps.theta	= math.atan2(self.odom_gpsxenc.p_y_old-the_p_gps.y, self.odom_gpsxenc.p_x_old-the_p_gps.x)
+	# 	#		self.odom_gpsxenc.yawUpdateGps(the_p_gps)
+	#
+	#
+	# 	#-------------------------------------------------------------------#
+	# 	#					Publish and Broadcast each Pose					#
+	# 	#-------------------------------------------------------------------#
+	# 	# Gps_Enc
+	# 	self.odom_gps_enc.odomPub()
+	# 	self.odom_gps_enc.tfBc()
+	#
+	# 	# Gps-Imu
+	# 	self.odom_gps_imu.odomPub()
+	# 	self.odom_gps_imu.tfBc()
+	#
+	# 	# GpsxEnc
+	# 	self.odom_gpsxenc.odomPub()
+	# 	self.odom_gpsxenc.tfBc()
+	#
+	# 	if self.gnss_hdop < 0.25:
+	# 		self.odom_gpsxenc.trust_flg	= True
+	# 		self.odom_gpsxenc.p_x_old	= copy.deepcopy(the_p_gps.x)
+	# 		self.odom_gpsxenc.p_y_old	= copy.deepcopy(the_p_gps.y)
+	# 	else:
+	# 		self.odom_gpsxenc.trust_flg	= False
 
 
 	#===============================================s===========================
@@ -585,10 +705,10 @@ class DonkeyLocalization:
 	#===========================================================================
 	def resetPoses(self, in_pose):
 		self.odom_enc_enc.resetPose(in_pose)
-		self.odom_enc_imu.resetPose(in_pose)
-		self.odom_gps_enc.resetPose(in_pose)
-		self.odom_gps_imu.resetPose(in_pose)
-		self.odom_gpsxenc.resetPose(in_pose)
+		# self.odom_enc_imu.resetPose(in_pose)
+		# self.odom_gps_enc.resetPose(in_pose)
+		# self.odom_gps_imu.resetPose(in_pose)
+		# self.odom_gpsxenc.resetPose(in_pose)
 
 
 
