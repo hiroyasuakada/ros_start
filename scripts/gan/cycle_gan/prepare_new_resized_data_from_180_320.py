@@ -13,21 +13,29 @@ class DataArrangement(object):
         self.height = height
         self.width = width
 
-        self.prepared_data_directories = ['qualitative_binary_mask',
-                                          'qualitative_mask',
-                                          'test_qualitative',
-                                          'test_qualitative_with_binary_mask',
-                                          'test_quantitative',
-                                          'test_quantitative_as_gt',
+        # self.prepared_data_directories = ['qualitative_binary_mask',
+        #                                   'qualitative_mask',
+        #                                   'test_qualitative',
+        #                                   'test_qualitative_with_binary_mask',
+        #                                   'test_quantitative',
+        #                                   'test_quantitative_as_gt',
+        #                                   'test_quantitative_by_hand',
+        #                                   'test_quantitative_with_binary_mask_by_hand',
+        #                                   'train_not_tracking',
+        #                                   'train_tracking',
+        #                                   'train_tracking_with_binary_mask',
+        #                                   'tracking_binary_mask',
+        #                                   'tracking_mask'
+        #                                   ]
+
+        self.prepared_data_directories = ['test_quantitative_as_gt',
                                           'test_quantitative_by_hand',
                                           'test_quantitative_with_binary_mask_by_hand',
-                                          'train_not_tracking',
-                                          'train_tracking',
-                                          'train_tracking_with_binary_mask'
-                                          ]
+                                          'test_quantitative_binary_mask',
+                                          'test_quantitative_mask']
 
         self.resize_data_directories = ['trainA', 'trainB']  # trainA: tracking (mask or not), trainB: not_tracking
-        # self.target_dir = ['double', 'single', 'out_to_in', 'in_to_out']
+        self.target_dir = ['double', 'single', 'out_to_in', 'in_to_out']
         self.dict_for_mask_or_not = None
         self.X_not_tracking = []
         self.X_not_tracking_i = []
@@ -48,30 +56,33 @@ class DataArrangement(object):
 
             for directory in directories:
 
-                # if directory.find(self.target_dir[0]) != -1\
-                #         or directory.find(self.target_dir[1]) != -1\
-                #         or directory.find(self.target_dir[2]) != -1\
-                #         or directory.find(self.target_dir[3]) != -1:
+                if directory.find(self.target_dir[0]) != -1\
+                        or directory.find(self.target_dir[1]) != -1\
+                        or directory.find(self.target_dir[2]) != -1\
+                        or directory.find(self.target_dir[3]) != -1:
 
-                self.mkdir_2(self.height, self.width, prepared_data, directory)
-                files = glob.glob(str(path + '/{}/*.jpg'.format(directory)))
+                    self.mkdir_2(self.height, self.width, prepared_data, directory)
 
-                for file in files:
-                    get_file_name = os.path.basename(file)
-                    output_name = '{}_{}'.format(directory, get_file_name)
+                    files = glob.glob(str(path + '/{}/*.jpg'.format(directory)))
 
-                    image = Image.open(file)
-                    image = image.convert('RGB')
-                    image = image.resize((self.width, self.height))  # 108, 192 / 180, 320
-                    data = np.asarray(image)
+                    for file in files:
+                        get_file_name = os.path.basename(file)
+                        output_name = '{}_{}'.format(directory, get_file_name)
 
-                    print(output_name)
+                        image = Image.open(file)
+                        image = image.convert('RGB')
+                        image = image.resize((288, 144))  # 108, 192 / 180, 320
+                        data = np.asarray(image)
+                        data = data[0:128, 0:256]
 
-                    bgr_image = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
+                        print(output_name)
 
-                    cv2.imwrite('./{}_{}/dataset_for_cyclegan_by_csv/{}/{}'
-                                .format(self.height, self.width, prepared_data, directory)
-                                + '/' + get_file_name, bgr_image)
+                        bgr_image = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
+
+                        cv2.imwrite('./{}_{}/dataset_for_cyclegan_by_csv/{}/{}'
+                                    .format(self.height, self.width, prepared_data, directory)
+                                    + '/' + get_file_name, bgr_image)
+
 
     @staticmethod
     def mkdir_1(height, width, directory):
@@ -100,7 +111,7 @@ class DataArrangement(object):
                         # elif prepared_data == 'train_tracking_with_binary_mask':
                         #     cv2.imwrite('./{}_{}/with_binary_mask_4_situation/trainA'.format(self.height, self.width) +
                         #                 '/' + output_name, bgr_image)
-
+                        #
                         # if prepared_data == 'test_qualitative':
                         #     cv2.imwrite('./{}_{}/without_mask_4_situation/test_qualitative'.format(self.height, self.width) +
                         #                 '/' + output_name, bgr_image)
@@ -157,7 +168,7 @@ class DataArrangement(object):
 
 
 if __name__ == '__main__':
-    DA = DataArrangement(108, 192)  # (height, width) = (160, 320) or (80, 160) or (360, 360) in this case,
+    DA = DataArrangement(128, 256)  # (height, width) = (160, 320) or (80, 160) or (360, 360) in this case,
     DA.resize_data()
     print("finished_resize_data")
     # X_not_tracking, Y_tracking = DA.load_resized_data_for_gan(mask=True)

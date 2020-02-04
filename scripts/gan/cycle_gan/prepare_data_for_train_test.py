@@ -13,14 +13,21 @@ class DataArrangement(object):
         self.height = height
         self.width = width
 
-        self.prepared_data_directories = ['train_not_tracking',
-                                          'train_tracking',
-                                          'train_tracking_with_binary_mask',
-                                          'test_qualitative',
-                                          'test_qualitative_with_binary_mask',
-                                          'test_quantitative_as_gt',
+        # self.prepared_data_directories = ['train_not_tracking',
+        #                                   'train_tracking',
+        #                                   'train_tracking_with_binary_mask',
+        #                                   'test_qualitative',
+        #                                   'test_qualitative_with_binary_mask',
+        #                                   'test_quantitative_as_gt',
+        #                                   'test_quantitative_by_hand',
+        #                                   'test_quantitative_with_binary_mask_by_hand',
+        #                                   'tracking_binary_mask'
+        #                                   ]
+
+        self.prepared_data_directories = ['test_quantitative_as_gt',
+                                          'test_quantitative_with_binary_mask_by_hand',
                                           'test_quantitative_by_hand',
-                                          'test_quantitative_with_binary_mask_by_hand'
+                                          'test_quantitative_binary_mask'
                                           ]
 
         self.resize_data_directories = ['trainA', 'trainB']  # trainA: tracking (mask or not), trainB: not_tracking
@@ -71,6 +78,8 @@ class DataArrangement(object):
                         #     os.mkdir(self.directory_name)
                         # cv2.imwrite(self.directory_name + '/' + get_file_name, bgr_image)
 
+
+
 ########################################################################################################################
 
                         if prepared_data == 'train_not_tracking':
@@ -106,9 +115,27 @@ class DataArrangement(object):
                                         '/' + output_name, bgr_image)
 
                         elif prepared_data == 'test_quantitative_with_binary_mask_by_hand':
-                            cv2.imwrite('./{}_{}/with_binary_mask_4_situation_by_csv/test_quantitative_with_binary_mask_by_hand'.format(self.height, self.width) +
-                                        '/' + output_name, bgr_image)
+                            cv2.imwrite(
+                                './{}_{}/with_binary_mask_4_situation_by_csv/test_quantitative_with_binary_mask_by_hand'
+                                .format(self.height, self.width) + '/' + output_name, bgr_image)
 
+                        elif prepared_data == 'tracking_binary_mask':
+                            cv2.imwrite(
+                                './{}_{}/with_binary_mask_4_situation_by_csv/tracking_binary_mask'.format(self.height, self.width) +
+                                '/' + output_name, bgr_image)
+                            cv2.imwrite(
+                                './{}_{}/without_mask_4_situation_by_csv/tracking_binary_mask'.format(self.height, self.width) +
+                                '/' + output_name, bgr_image)
+
+                        elif prepared_data == 'test_quantitative_binary_mask':
+                            cv2.imwrite(
+                                './{}_{}/with_binary_mask_4_situation_by_csv/test_quantitative_binary_mask'.format(
+                                    self.height, self.width) +
+                                '/' + output_name, bgr_image)
+                            cv2.imwrite(
+                                './{}_{}/without_mask_4_situation_by_csv/test_quantitative_binary_mask'.format(
+                                    self.height, self.width) +
+                                '/' + output_name, bgr_image)
 
 
     def load_resized_data_for_gan(self, mask=True):
@@ -143,9 +170,9 @@ class DataArrangement(object):
 
 
 if __name__ == '__main__':
-    DA = DataArrangement(108, 192)  # 108, 192 / 180, 320,
+    DA = DataArrangement(128, 256)  # 108, 192 / 180, 320,
     DA.resize_data()
-    print("finished_resize_data")
+    print("finished_test_data")
     # X_not_tracking, Y_tracking = DA.load_resized_data_for_gan(mask=True)
     # print('X_not_tracking_raw: {}, Y_tracking_raw: {}'.format(X_not_tracking, Y_tracking))
     # print('shape of X_not_tracking_raw: {}, shape of Y_tracking_raw: {}'.format(X_not_tracking.shape, Y_tracking.shape))

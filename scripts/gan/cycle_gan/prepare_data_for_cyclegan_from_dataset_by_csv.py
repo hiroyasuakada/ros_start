@@ -25,9 +25,8 @@ class DataArrangement(object):
         #                                   'test_quantitative_with_binary_mask_by_hand',
         #                                   'qualitative_binary_mask',
         #                                   'qualitative_mask']
-        self.prepared_data_directories = ['test_quantitative_as_gt',
-                                          'test_quantitative_by_hand',
-                                          'test_quantitative_with_binary_mask_by_hand'
+        self.prepared_data_directories = ['tracking_binary_mask',
+                                          'tracking_mask'
                                           ]
 
         # self.prepared_data_directories = ['not_tracking_raw', 'tracking_raw_mask', 'test_raw_mask', 'tracking_raw', 'test_raw']
@@ -38,6 +37,7 @@ class DataArrangement(object):
         self.Y_tracking = []
         self.Y_tracking_i = []
         self.iteration = 1
+        self.dir_name = None
         self.directory_name = None
         self.new_csv_name = None
 
@@ -51,6 +51,12 @@ class DataArrangement(object):
             for directory in directories:
                 print(directory)
                 files = glob.glob(str(path.resolve()) + '/{}/*.jpg'.format(directory))
+
+                # create dir
+                self.dir_name = './{}_{}/dataset_for_cyclegan_by_csv/{}' \
+                            .format(self.height, self.width, prepared_data)
+                if not os.path.exists(self.dir_name):
+                    os.mkdir(self.dir_name)
 
                 # load csv
                 path_csv = Path(__file__).parent
@@ -66,8 +72,8 @@ class DataArrangement(object):
 
                 self.new_csv_name = \
                     './{}_{}/dataset_for_cyclegan_by_csv/enc_theta_dx_of_1_csv/{}.csv'.format(self.height, self.width, directory)
-                if os.path.exists(self.new_csv_name) is False:
-                    df_new.to_csv(self.new_csv_name, header=False, index=False)
+                # if os.path.exists(self.new_csv_name) is False:
+                #     df_new.to_csv(self.new_csv_name, header=False, index=False)
 
                 for file in files:
                     get_file_name = os.path.basename(file)
