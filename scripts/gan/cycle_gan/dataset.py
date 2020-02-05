@@ -217,27 +217,30 @@ class LSTMDataset(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
 
-    batch_size = 1
-    window_size = 64
-    step_size = 8
+    batch_size = 4
+    window_size = 48
+    step_size = 6
     train_dataset = LSTMDataset(window_size, step_size, is_train=True, is_condition=False)
     # train_dataset = UnalignedDataset(is_train=True)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    # batch = iter(train_loader).next()
-    # print(batch['A'][0].shape)
-    # # print(batch['B'].shape)
-    # print(batch['path_A'])
+    # data = iter(train_loader).next()
+    # print('===========================================================')
+    # print(data['A'].shape)
+    # print(data['A'][0].shape)
+    # # print(data['B'])
+    # print(data['path_A'])  # torch.Size([4, 8, 3, 128, 256])
+    # print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
+    # # print(data['path_B'])
     # print('=====================')
-    # print(batch['path_B'])
 
     for batch_idx, data in enumerate(train_loader):
         print(str(batch_idx) + '===========================================================')
         print(data['A'].shape)
         print(data['A'][0].shape)
         # print(data['B'])
-        print(data['path_A'])
-        print(data['path_A'][0])
+        print(data['path_A'])  # torch.Size([4, 8, 3, 128, 256])
+        print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
         # print(data['path_B'])
         print('=====================')
 

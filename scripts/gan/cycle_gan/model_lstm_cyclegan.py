@@ -14,18 +14,17 @@ from tensorboardX import SummaryWriter
 import time
 import cv2
 
-from dataset import UnalignedDataset
 from model_base import Generator, Discriminator
 
 
 class CycleGAN(object):
 
-    def __init__(self, log_dir='logs', device='cuda', lr=0.0002, beta1=0.5,
-                 lambda_idt=0.5, lambda_A=10.0, lambda_B=10.0, lambda_mask=10.0):
+    def __init__(self, log_dir='logs', device='cuda:0', lr=0.0002, beta1=0.5,
+                 lambda_idt=5, lambda_A=10.0, lambda_B=10.0, lambda_mask=0.0):
         self.lr = lr
         self.beta1 = beta1
         self.device = device
-        self.gpu_ids = [0]  # 0, 1, 2
+        self.gpu_ids = [0, 1]  # 0, 1, 2
 
         self.netG_A = Generator().to(self.device)
         self.netG_B = Generator().to(self.device)
@@ -34,11 +33,11 @@ class CycleGAN(object):
 
         print(torch.cuda.is_available())
 
-        # # multi-GPUs
-        # self.netG_A = torch.nn.DataParallel(self.netG_A, self.gpu_ids)
-        # self.netG_B = torch.nn.DataParallel(self.netG_B, self.gpu_ids)
-        # self.netD_A = torch.nn.DataParallel(self.netD_A, self.gpu_ids)
-        # self.netD_B = torch.nn.DataParallel(self.netD_B, self.gpu_ids)
+        # multi-GPUs
+        self.netG_A = torch.nn.DataParallel(self.netG_A, self.gpu_ids)
+        self.netG_B = torch.nn.DataParallel(self.netG_B, self.gpu_ids)
+        self.netD_A = torch.nn.DataParallel(self.netD_A, self.gpu_ids)
+        self.netD_B = torch.nn.DataParallel(self.netD_B, self.gpu_ids)
 
         self.fake_A_pool = ImagePool(50)
         self.fake_B_pool = ImagePool(50)
@@ -90,10 +89,10 @@ class CycleGAN(object):
         # その場合は何も変換してほしくないという制約
         # TODO: idt_Aの命名はよくない気がする idt_Bの方が適切では？
         idt_A = self.netG_A(real_B)
-        loss_idt_A = self.criterionIdt(idt_A, real_B) * self.lambda_B * self.lambda_idt
+        loss_idt_A = self.criterionIdt(idt_A, real_B) * self.lambda_idt
 
         idt_B = self.netG_B(real_A)
-        loss_idt_B = self.criterionIdt(idt_B, real_A) * self.lambda_A * self.lambda_idt
+        loss_idt_B = self.criterionIdt(idt_B, real_A) * self.lambda_idt
 
         # GAN loss D_A(G_A(A))
         # G_Aとしては生成した偽物画像が本物（True）とみなしてほしい
@@ -120,7 +119,10 @@ class CycleGAN(object):
         ############################################################################################
 
         # mse for mase as a new loss function
-        loss_mask = self.criterionMask(real_A, fake_B, real_A_mask) * self.lambda_mask
+        if self.lambda_mask == 0:
+            loss_mask = torch.tensor(0).to(self.device)
+        else:
+            loss_mask = self.criterionMask(real_A, fake_B, real_A_mask) * self.lambda_mask
 
         ############################################################################################
 
@@ -163,7 +165,7 @@ class CycleGAN(object):
         pred_real = self.netD_B(real_A)
         loss_D_real = self.criterionGAN(pred_real, True)
 
-        # 偽物画像を入れたときは偽物と認識するほうがよい
+        # 偽物画像を入れたときは偽物と認識するほうがよいdpkg エラー 修復
         pred_fake = self.netD_B(fake_A.detach())
         loss_D_fake = self.criterionGAN(pred_fake, False)
 
