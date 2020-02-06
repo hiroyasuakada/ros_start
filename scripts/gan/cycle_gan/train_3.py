@@ -70,7 +70,7 @@ if __name__ == '__main__':
     width = 256
 
     # training details
-    batch_size = 2
+    batch_size = 4
     lr = 0.0002  # initial learning rate for adam
     beta1 = 0.5  # momentum term of adam
 
@@ -86,13 +86,13 @@ if __name__ == '__main__':
     lambda_idt = 5.0
     lambda_A = 10.0
     lambda_B = 10.0
-    lambda_mask = 0.0
+    lambda_mask = 10.0
 
     # files, dirs
-    log_dir = 'logs_2'
+    log_dir = 'logs_3'
 
     # gpu
-    device = torch.device("cuda:0" if torch.cuda.is_available else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available else "cpu")
     print('device {}'.format(device))
 
     # dataset

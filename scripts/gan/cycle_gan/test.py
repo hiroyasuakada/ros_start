@@ -23,8 +23,8 @@ from model_cyclegan import CycleGAN
 
 def test(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mask,
           num_epoch, num_epoch_resume, save_epoch_freq, test_loader, epoch_label):
-    model = CycleGAN(log_dir=log_dir, device=device, lr=lr, beta1=beta1,
-                     lambda_idt=lambda_idt, lambda_A=lambda_A, lambda_B=lambda_B, lambda_mask=lambda_mask)
+    model = CycleGAN(log_dir=log_dir, device=device, lr=lr, beta1=beta1, lambda_idt=lambda_idt,
+                     lambda_A=lambda_A, lambda_B=lambda_B, lambda_mask=lambda_mask, mode_train=False)
     model.log_dir = 'logs'
     model.load(epoch_label)
 
@@ -103,10 +103,10 @@ if __name__ == '__main__':
     save_epoch_freq = 5
 
     # weights of loss function
-    lambda_idt = 0.5
+    lambda_idt = 5
     lambda_A = 10.0
     lambda_B = 10.0
-    lambda_mask = 10.0
+    lambda_mask = 0.0
 
     # files, dirs
     log_dir = 'logs'

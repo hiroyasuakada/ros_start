@@ -55,10 +55,6 @@ class UnalignedDataset(torch.utils.data.Dataset):
         index_A = index % self.size_A  # due to the different num of each data A, B
         path_A = self.image_paths_A[index_A]
 
-        print('path_A')
-        print(path_A)
-        print('path_A')
-
         index_A_mask = index % self.size_A_mask
         path_A_mask = self.image_paths_A_mask[index_A_mask]
 
@@ -78,7 +74,7 @@ class UnalignedDataset(torch.utils.data.Dataset):
         # return {'A': A, 'B': B, 'A_mask': A_mask}
 
         return {'A': A, 'B': B, 'A_mask': A_mask,
-                'path_A': [path_A], 'path_B': path_B, 'path_A_mask': path_A_mask}
+                'path_A': path_A, 'path_B': path_B, 'path_A_mask': path_A_mask}
 
     def __len__(self):
         return max(self.size_A, self.size_B, self.size_A_mask)

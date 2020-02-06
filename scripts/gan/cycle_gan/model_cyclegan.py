@@ -21,11 +21,14 @@ from model_base import Generator, Discriminator
 class CycleGAN(object):
 
     def __init__(self, log_dir='logs', device='cuda:0', lr=0.0002, beta1=0.5,
-                 lambda_idt=5, lambda_A=10.0, lambda_B=10.0, lambda_mask=0.0):
+                 lambda_idt=5, lambda_A=10.0, lambda_B=10.0, lambda_mask=0.0, mode_train=True):
         self.lr = lr
         self.beta1 = beta1
         self.device = device
-        self.gpu_ids = [0, 1]  # 0, 1, 2
+        if mode_train:
+            self.gpu_ids = [1, 0]  # 0, 1, 2
+        else:
+            self.gpu_ids = [0]
 
         self.netG_A = Generator().to(self.device)
         self.netG_B = Generator().to(self.device)
