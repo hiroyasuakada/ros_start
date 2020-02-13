@@ -25,7 +25,7 @@ def test(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mask
           num_epoch, num_epoch_resume, save_epoch_freq, test_loader, epoch_label):
     model = CycleGAN(log_dir=log_dir, device=device, lr=lr, beta1=beta1, lambda_idt=lambda_idt,
                      lambda_A=lambda_A, lambda_B=lambda_B, lambda_mask=lambda_mask, mode_train=False)
-    model.log_dir = 'logs'
+    model.log_dir = log_dir
     model.load(epoch_label)
 
     time_list = []
@@ -51,18 +51,18 @@ def test(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mask
         fake_B = fake_B.to(device2)
         fake_B = fake_B.detach().clone().numpy()
 
-        if not os.path.exists('./logs/real_A'):
-            os.mkdir('./logs/real_A')
-        if not os.path.exists('./logs/fake_B'):
-            os.mkdir('./logs/fake_B')
+        if not os.path.exists('./{}/real_A'.format(log_dir)):
+            os.mkdir('./{}/real_A'.format(log_dir))
+        if not os.path.exists('./{}/fake_B'.format(log_dir)):
+            os.mkdir('./{}/fake_B'.format(log_dir))
 
         for i in range(real_A.shape[0]):
             file_name = data['path_A'][i].split('/')[3]
 
             print(file_name)
 
-            save_path_real_A = './logs/real_A/' + file_name
-            save_path_fake_B = './logs/fake_B/' + file_name
+            save_path_real_A = './{}/real_A/'.format(log_dir) + file_name
+            save_path_fake_B = './{}/fake_B/'.format(log_dir) + file_name
 
             real_A_id_i = real_A[i]
             fake_B_id_i = fake_B[i]
@@ -109,7 +109,7 @@ if __name__ == '__main__':
     lambda_mask = 0.0
 
     # files, dirs
-    log_dir = 'logs'
+    log_dir = 'logs_B8_E50_5_10_10'
 
     # gpu
     device = torch.device("cuda:0" if torch.cuda.is_available else "cpu")

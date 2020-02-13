@@ -14,7 +14,8 @@ from tensorboardX import SummaryWriter
 import time
 import cv2
 from natsort import natsorted
-
+import pandas as pd
+# import seaborn as sns
 
 class UnalignedDataset(torch.utils.data.Dataset):
     def __init__(self, is_train):
@@ -77,7 +78,9 @@ class UnalignedDataset(torch.utils.data.Dataset):
                 'path_A': path_A, 'path_B': path_B, 'path_A_mask': path_A_mask}
 
     def __len__(self):
-        return max(self.size_A, self.size_B, self.size_A_mask)
+        len = min(self.size_A, self.size_B)
+        print(len)
+        return len   # self.size_A_mask
 
     @staticmethod
     def _make_dataset(dir):
@@ -104,8 +107,9 @@ class UnalignedDataset(torch.utils.data.Dataset):
 
 
 class LSTMDataset(torch.utils.data.Dataset):
-    def __init__(self, _window_size, _step_size, is_train, is_condition):
+    def __init__(self, _batch_size, _window_size, _step_size, is_train):
         super(LSTMDataset, self).__init__()
+        self.batch_size = _batch_size
         self.window_size = _window_size
         self.step_size = _step_size
 
@@ -117,20 +121,14 @@ class LSTMDataset(torch.utils.data.Dataset):
             dir_B = os.path.join(root_dir, 'trainB')
             dir_A_mask = os.path.join(root_dir, 'tracking_binary_mask')
 
-            if is_condition:
-                dir_enc = os.path.join(root_dir, 'enc_theta_dx_of_1_csv')
-
         else:
             dir_A = os.path.join(root_dir, 'test_quantitative_by_hand')
             dir_B = os.path.join(root_dir, 'test_quantitative_by_hand')  # has no effect
             dir_A_mask = os.path.join(root_dir, 'test_quantitative_binary_mask')
 
-            if is_condition:
-                dir_enc = os.path.join(root_dir, 'enc_theta_dx_of_1_csv')
-
-        _, self.image_paths_A = self._make_dataset(dir_A, self.window_size, self.step_size)
-        _, self.image_paths_B = self._make_dataset(dir_B, self.window_size, self.step_size)
-        _, self.image_paths_A_mask = self._make_dataset(dir_A_mask, self.window_size, self.step_size)
+        self.image_paths_A = self._make_dataset(dir_A, self.window_size, self.step_size)
+        self.image_paths_B = self._make_dataset(dir_B, self.window_size, self.step_size)
+        self.image_paths_A_mask = self._make_dataset(dir_A_mask, self.window_size, self.step_size)
 
         self.num_img = self.window_size / self.step_size
 
@@ -141,23 +139,20 @@ class LSTMDataset(torch.utils.data.Dataset):
         self.transform = self._make_transform(is_train)
 
     def __len__(self):
-        return max(self.size_A, self.size_B, self.size_A_mask)
+        len = min(self.size_A, self.size_B) - min(self.size_A, self.size_B) % int(self.batch_size)
+        print('len: ' + str(len))
+        return len   # self.size_A_mask
 
     def __getitem__(self, index):
         index_A = index % self.size_A
         path_A = self.image_paths_A[index_A]  # at the point, [3, 4, 5]
 
-        print(path_A)
-        print('=')
-        print(path_A[0])
-        print(self.size_A)
-
         index_A_mask = index % self.size_A_mask
         path_A_mask = self.image_paths_A_mask[index_A_mask]
-
-        index_B = index % self.size_B
+        
+        index_B = random.randint(0, self.size_B - 1)
+        # index_B = index % self.size_B
         path_B = self.image_paths_B[index_B]
-        # index_B = random.randint(0, self.size_B - 1)
 
         # process the sequential images with transform function
         A = self.get_sequential_imgs(path_A, self.num_img)
@@ -167,6 +162,9 @@ class LSTMDataset(torch.utils.data.Dataset):
         list_path_A = '-'.join(path_A)
         list_path_B = '-'.join(path_B)
         list_path_A_mask = '-'.join(path_A_mask)
+
+        # return {'A': A, 'B': B,
+        #         'path_A': list_path_A, 'path_B': list_path_B}
 
         return {'A': A, 'B': B, 'A_mask': A_mask,
                 'path_A': list_path_A, 'path_B': list_path_B, 'path_A_mask': list_path_A_mask}
@@ -184,18 +182,18 @@ class LSTMDataset(torch.utils.data.Dataset):
     def _make_dataset(dir, _window_size, _step_size):
         directories = os.listdir(dir)
         image_paths = []
-        directory_name = []
 
         for directory in directories:
             files = glob.glob(os.path.join(dir, directory, '*.jpg'))
-            files = natsorted(files)
-            num_sequential_imgs = (len(files) - _window_size) + 1  # (all - ws) / s + 1
-            for i in range(num_sequential_imgs):
-                sequential_imgs = files[i: i + _window_size: _step_size]  # 0 ~ 8 (not including No.8)
-                image_paths.append(sequential_imgs)
-                directory_name.append(directory)
-
-        return directory_name, image_paths
+            if len(files) > _window_size:
+                files = natsorted(files)
+                num_sequential_imgs = (len(files) - _window_size) + 1  # (all - ws) / s + 1
+                for i in range(num_sequential_imgs):
+                    sequential_imgs = files[i: i + _window_size: _step_size]  # 0 ~ 6 (not including No68)
+                    assert len(sequential_imgs) == (_window_size / _step_size)
+                    image_paths.append(sequential_imgs)
+        print(len(image_paths))
+        return image_paths
 
     @staticmethod
     def _make_transform(is_train):
@@ -211,14 +209,220 @@ class LSTMDataset(torch.utils.data.Dataset):
 ####################################################################################################################
 
 
+class ActionConditionedLSTMDataset(torch.utils.data.Dataset):
+    def __init__(self, _batch_size, _window_size, _step_size, is_train):
+        super(ActionConditionedLSTMDataset, self).__init__()
+        self.batch_size = _batch_size
+        self.window_size = _window_size
+        self.step_size = _step_size
+
+        # make path to data
+        root_dir = os.path.join('128_256', 'without_mask_4_situation_by_csv_lstm')
+
+        if is_train:
+            dir_A = os.path.join(root_dir, 'trainA')
+            dir_B = os.path.join(root_dir, 'trainB')
+            dir_A_mask = os.path.join(root_dir, 'tracking_binary_mask')
+            dir_enc = os.path.join(root_dir, 'enc_theta_dx_csv')
+
+        else:
+            dir_A = os.path.join(root_dir, 'test_quantitative_by_hand')
+            dir_B = os.path.join(root_dir, 'test_quantitative_by_hand')  # has no effect
+            dir_A_mask = os.path.join(root_dir, 'test_quantitative_binary_mask')
+            dir_enc = os.path.join(root_dir, 'enc_theta_dx_csv')
+
+        self.image_paths_A, self.enc_value_theta_A, self.enc_value_x_A, self.enc_value_y_A = \
+            self._make_dataset(dir_A, dir_enc, self.window_size, self.step_size)
+        self.image_paths_B, self.enc_value_theta_B, self.enc_value_x_B, self.enc_value_y_B = \
+            self._make_dataset(dir_B, dir_enc, self.window_size, self.step_size)
+        self.image_paths_A_mask, _, _, _ = \
+            self._make_dataset(dir_A_mask, dir_enc, self.window_size, self.step_size, mode_enc=False)
+
+        self.num_img = self.window_size / self.step_size
+
+        self.size_A = len(self.image_paths_A)
+        self.size_B = len(self.image_paths_B)
+        self.size_A_mask = len(self.image_paths_A_mask)
+
+        self.transform = self._make_transform(is_train)
+
+    def __len__(self):
+        len = min(self.size_A, self.size_B) - min(self.size_A, self.size_B) % int(self.batch_size)
+        print('len: ' + str(len))
+        return len  # self.size_A_mask
+
+    def __getitem__(self, index):
+        index_A = index % self.size_A
+        path_A = self.image_paths_A[index_A]  # at the point, [3, 4, 5]
+        theta_A = torch.stack(list(self.enc_value_theta_A[index_A]))
+        x_A = torch.stack(list(self.enc_value_x_A[index_A]))
+        y_A = torch.stack(list(self.enc_value_y_A[index_A]))
+
+        index_A_mask = index % self.size_A_mask
+        path_A_mask = self.image_paths_A_mask[index_A_mask]
+
+        index_B = random.randint(0, self.size_B - 1)
+        # index_B = index % self.size_B
+        path_B = self.image_paths_B[index_B]
+        theta_B = self.enc_value_theta_B[index_B]
+        x_B = self.enc_value_x_B[index_B]
+        y_B = self.enc_value_y_B[index_B]
+
+        # process the sequential images with transform function
+        A = self.get_sequential_imgs(path_A, self.num_img)
+        B = self.get_sequential_imgs(path_B, self.num_img)
+        A_mask = self.get_sequential_imgs(path_A_mask, self.num_img)
+
+        list_path_A = '-'.join(path_A)
+        list_path_B = '-'.join(path_B)
+        list_path_A_mask = '-'.join(path_A_mask)
+
+        # return {'A': A, 'B': B,
+        #         'path_A': list_path_A, 'path_B': list_path_B}
+
+        return {'A': A,
+                'path_A': list_path_A,
+                'theta_A': theta_A,
+                'x_A': x_A,
+                'y_A': y_A,
+
+                'B': B,
+                'path_B': list_path_B,
+                'theta_B': theta_B,
+                'x_B': x_B,
+                'y_B': y_B,
+
+                'A_mask': A_mask,
+                'path_A_mask': list_path_A_mask
+                }
+
+    def get_sequential_imgs(self, path, num_img):
+        # img_transformed = [[0] for i in range(self.window_size)]
+        img_transformed = []
+        for i in range(int(num_img)):
+            img = Image.open(path[i]).convert('RGB')
+            img_transformed.append(self.transform(img))
+
+        return torch.stack(img_transformed)
+
+    @staticmethod
+    def _make_dataset(dir, dir_enc, _window_size, _step_size, mode_enc=True):
+        directories = os.listdir(dir)
+        image_paths = []
+        enc_value_theta_full = []
+        enc_value_x_full = []
+        enc_value_y_full = []
+        # ###################
+        # theta = []
+        # x = []
+        # y = []
+        # ###################
+
+        for directory in directories:
+            files = glob.glob(os.path.join(dir, directory, '*.jpg'))
+            if len(files) > _window_size:
+                files = natsorted(files)
+                num_sequential_imgs = (len(files) - _window_size) + 1  # (all - ws) / s + 1
+
+                if mode_enc is True:
+                    df = pd.read_csv(os.path.join(dir_enc, directory + '.csv'), header=None)
+                    print(directory)
+
+                for i in range(num_sequential_imgs):
+                    sequential_imgs = files[i: i + _window_size: _step_size]  # 0 ~ 6 (not including No68)
+                    assert len(sequential_imgs) == (_window_size / _step_size)
+                    image_paths.append(sequential_imgs)
+
+                    if mode_enc is True:
+                        enc_value_theta = []
+                        enc_value_x = []
+                        enc_value_y = []
+
+                        for j in range(int(_window_size / _step_size)):
+                            if j == 0:
+                                # print(int(os.path.basename(sequential_imgs[j]).strip('.jpg')))
+                                enc_value_theta.append(torch.tensor(0, dtype=torch.double))
+                                enc_value_x.append(torch.tensor(0, dtype=torch.double))
+                                enc_value_y.append(torch.tensor(0, dtype=torch.double))
+                            else:
+                                previous_file_name = int(os.path.basename(sequential_imgs[j - 1]).strip('.jpg'))
+                                current_file_name = int(os.path.basename(sequential_imgs[j]).strip('.jpg'))
+
+                                df_part = df[previous_file_name: current_file_name]
+
+                                enc_value_theta.append(torch.tensor(sum(df_part[2]), dtype=torch.double))
+                                enc_value_x.append(torch.tensor(sum(df_part[3]), dtype=torch.double))
+                                enc_value_y.append(torch.tensor(sum(df_part[4]), dtype=torch.double))
+
+                                # theta.append(sum(df_part[2]))
+                                # x.append(sum(df_part[3]))
+                                # y.append(sum(df_part[4]))
+
+                        enc_value_theta_full.append(enc_value_theta)
+                        enc_value_x_full.append(enc_value_x)
+                        enc_value_y_full.append(enc_value_y)
+
+        # print(round(sum(theta) / len(theta), 5))
+        # print(round(sum(x) / len(x), 5))
+        # print(round(sum(y) / len(y), 5))
+        # print('=====')
+        #
+        # print(round(max(theta), 6))
+        # print(round(max(x), 6))
+        # print(round(max(y), 6))
+        # print('=====')
+        #
+        # print(round(min(theta), 6))
+        # print(round(min(x), 6))
+        # print(round(min(y), 6))
+
+        print(len(image_paths))
+        # print(len(enc_value_theta_full))
+        # print(len(enc_value_x_full))
+        # print(len(enc_value_y_full))
+        #
+        # x = input()
+
+        return image_paths, enc_value_theta_full, enc_value_x_full, enc_value_y_full
+
+    @staticmethod
+    def _make_transform(is_train):
+        transforms_list = []
+        #         transforms_list.append(transforms.Resize((load_size, load_size), Image.BICUBIC))
+        #         transforms_list.append(transforms.RandomCrop(fine_size))
+        #         if is_train:
+        #             transforms_list.append(transforms.RandomHorizontalFlip())
+        transforms_list.append(transforms.ToTensor())
+        transforms_list.append(transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)))  # [0, 1] => [-1, 1]
+        return transforms.Compose(transforms_list)
+
+
+####################################################################################################################
+
+
 if __name__ == '__main__':
 
-    batch_size = 4
+    batch_size = 1
     window_size = 48
-    step_size = 6
-    train_dataset = LSTMDataset(window_size, step_size, is_train=True, is_condition=False)
-    # train_dataset = UnalignedDataset(is_train=True)
+    step_size = 8
+    train_dataset = ActionConditionedLSTMDataset(batch_size, window_size, step_size, is_train=True)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    for batch_idx, data in enumerate(train_loader):
+        print('===========================================================')
+        print('batch_idx: ' + str(batch_idx))
+        # print(data['A'])
+        print(data['A'].shape)  # torch.Size([4, 8, 3, 128, 256])
+        print(data['A'][0].shape)  # torch.Size([8, 3, 128, 256])
+        print(data['path_A'])
+        print(data['path_A'][0])
+
+        print(data['x_A'])
+        print(len(data['x_A']))
+        print('===========================================================')
+
+        if batch_idx == 0:
+            x = input()
 
     # data = iter(train_loader).next()
     # print('===========================================================')
@@ -229,16 +433,3 @@ if __name__ == '__main__':
     # print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
     # # print(data['path_B'])
     # print('=====================')
-
-    for batch_idx, data in enumerate(train_loader):
-        print(str(batch_idx) + '===========================================================')
-        print(data['A'].shape)
-        print(data['A'][0].shape)
-        # print(data['B'])
-        print(data['path_A'])  # torch.Size([4, 8, 3, 128, 256])
-        print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
-        # print(data['path_B'])
-        print('=====================')
-
-        if batch_idx == 0:
-            x = input()

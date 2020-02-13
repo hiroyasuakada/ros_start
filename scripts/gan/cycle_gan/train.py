@@ -53,6 +53,7 @@ def train(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mas
         writer.add_scalar('loss_cycle_B', losses[5], epoch + 1 + num_epoch_resume)
         writer.add_scalar('loss_idt_A', losses[6], epoch + 1 + num_epoch_resume)
         writer.add_scalar('loss_idt_B', losses[7], epoch + 1 + num_epoch_resume)
+        writer.add_scalar('loss_mask', losses[8], epoch + 1 + num_epoch_resume)
 
         if (epoch + 1 + num_epoch_resume) % save_epoch_freq == 0:
             model.save('epoch%d' % (epoch + 1 + num_epoch_resume))

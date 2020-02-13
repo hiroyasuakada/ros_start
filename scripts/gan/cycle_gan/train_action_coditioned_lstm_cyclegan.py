@@ -105,7 +105,7 @@ if __name__ == '__main__':
     print('device {}'.format(device))
 
     # dataset
-    train_dataset = LSTMDataset(batch_size, window_size, step_size, is_train=True)
+    train_dataset = LSTMDataset(batch_size, window_size, step_size, is_train=True, is_condition=False)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # train
