@@ -14,8 +14,9 @@ from tensorboardX import SummaryWriter
 import time
 import cv2
 from natsort import natsorted
-import pandas as pd
+# import pandas as pd
 # import seaborn as sns
+
 
 class UnalignedDataset(torch.utils.data.Dataset):
     def __init__(self, is_train):
@@ -72,10 +73,10 @@ class UnalignedDataset(torch.utils.data.Dataset):
         B = self.transform(img_B)
         A_mask = self.transform(img_A_mask)
 
-        # return {'A': A, 'B': B, 'A_mask': A_mask}
+        return {'A': A, 'B': B, 'A_mask': A_mask}
 
-        return {'A': A, 'B': B, 'A_mask': A_mask,
-                'path_A': path_A, 'path_B': path_B, 'path_A_mask': path_A_mask}
+        # return {'A': A, 'B': B, 'A_mask': A_mask,
+        #         'path_A': path_A, 'path_B': path_B, 'path_A_mask': path_A_mask}
 
     def __len__(self):
         len = min(self.size_A, self.size_B)
@@ -402,27 +403,31 @@ class ActionConditionedLSTMDataset(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
 
-    batch_size = 1
+    batch_size = 2
     window_size = 48
     step_size = 8
-    train_dataset = ActionConditionedLSTMDataset(batch_size, window_size, step_size, is_train=True)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    for batch_idx, data in enumerate(train_loader):
-        print('===========================================================')
-        print('batch_idx: ' + str(batch_idx))
-        # print(data['A'])
-        print(data['A'].shape)  # torch.Size([4, 8, 3, 128, 256])
-        print(data['A'][0].shape)  # torch.Size([8, 3, 128, 256])
-        print(data['path_A'])
-        print(data['path_A'][0])
+    device = torch.device("cuda:0" if torch.cuda.is_available else "cpu")
+    print('device {}'.format(device))
 
-        print(data['x_A'])
-        print(len(data['x_A']))
-        print('===========================================================')
-
-        if batch_idx == 0:
-            x = input()
+    # train_dataset = ActionConditionedLSTMDataset(batch_size, window_size, step_size, is_train=True)
+    # train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    #
+    # for batch_idx, data in enumerate(train_loader):
+    #     print('===========================================================')
+    #     print('batch_idx: ' + str(batch_idx))
+    #     # print(data['A'])
+    #     print(data['A'].shape)  # torch.Size([4, 8, 3, 128, 256])
+    #     print(data['A'][0].shape)  # torch.Size([8, 3, 128, 256])
+    #     print(data['path_A'])
+    #     print(data['path_A'][0])
+    #
+    #     print(data['x_A'])
+    #     print(len(data['x_A']))
+    #     print('===========================================================')
+    #
+    #     if batch_idx == 0:
+    #         x = input()
 
     # data = iter(train_loader).next()
     # print('===========================================================')
@@ -433,3 +438,62 @@ if __name__ == '__main__':
     # print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
     # # print(data['path_B'])
     # print('=====================')
+
+    ####################################################################################################################
+    # check mask
+    ####################################################################################################################
+
+    train_dataset = LSTMDataset(batch_size, window_size, step_size, is_train=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    #
+    data = iter(train_loader).next()
+    print('===========================================================')
+    # print(data['A'].shape)
+    # print(data['A'][0].shape)
+    # print(data['B'])
+    # print(data['path_A'])  # torch.Size([4, 8, 3, 128, 256])
+    # print(data['path_A'][0])  # torch.Size([8, 3, 128, 256])
+    data['A'] = data['A'].to(device)
+    print('A: ' + str(data['A'].shape))
+    print('===========================================================')
+
+    input_1 = torch.tensor([0.1, 0.1, 0.1], requires_grad=False).to(device)
+
+    real = data['A'].view(int(batch_size * window_size / step_size), 3, 128, 256).to(device)
+    real_mask = data['A_mask'].view(int(batch_size * window_size / step_size), 3, 128, 256).to(device)
+
+    print(real.shape)
+    print(real_mask.shape)
+
+    # [-1,1] => [0, 1]
+    real_A = 0.5 * (real + 1)
+    # fake_B = 0.5 * (fake + 1)
+    real_A_mask = 0.5 * (real_mask + 1)
+
+    # transpose axis
+    real_A = real_A.permute(0, 2, 3, 1)
+    # fake_B = fake_B.permute(0, 2, 3, 1)
+    real_A_mask = real_A_mask.permute(0, 2, 3, 1)
+
+    target_with_mask = torch.where(real_A_mask[:, :, :] > input_1, real_A_mask * 0, real_A).to(device)
+    # fake_with_mask = torch.where(real_A_mask[:, :, :] > input_1, real_A_mask * 0, fake_B).to(self.device)
+
+    # real_A = real_A.permute(0, 3, 1, 2)
+    #
+    # real_A = real_A.view(int(batch_size), int(window_size / step_size), 3, 128, 256)
+    #
+    # print(((real_A * 2 - 1) == data['A']).all())
+
+    real_A = real_A[9].to('cpu').detach().clone().numpy() * 255
+    real_A_mask = real_A_mask[9].to('cpu').detach().clone().numpy() * 255
+    target_with_mask = target_with_mask[9].to('cpu').detach().clone().numpy() * 255
+
+    print(real_A.shape)
+
+    real_A = cv2.cvtColor(real_A, cv2.COLOR_RGB2BGR)
+    real_A_mask = cv2.cvtColor(real_A_mask, cv2.COLOR_RGB2BGR)
+    target_with_mask = cv2.cvtColor(target_with_mask, cv2.COLOR_RGB2BGR)
+
+    cv2.imwrite('test_A.jpg', real_A)
+    cv2.imwrite('test_A_mask.jpg', real_A_mask)
+    cv2.imwrite('test_target.jpg', target_with_mask)

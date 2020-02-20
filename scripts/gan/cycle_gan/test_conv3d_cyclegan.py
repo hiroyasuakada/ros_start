@@ -16,17 +16,16 @@ import cv2
 
 ##################################################################
 from dataset import LSTMDataset
-from model_base import LSTMGenerator_A, LSTMGenerator_B, \
-    LSTMDiscriminator_A, LSTMDiscriminator_B, \
-    individualDiscriminator_A, individualDiscriminator_B
-from model_lstm_cyclegan import LSTMCycleGAN
+from model_base import Generator, Discriminator, LSTMGenerator_A, LSTMGenerator_B, \
+    Conv3dGenerator, Conv3dDiscriminator, FrameDiscriminator
+from model_conv3d_seq import Conv3dCycleGAN
 ##################################################################
 
 
 def test(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mask,
          batch_size_test, window_size, step_size,
          num_epoch, num_epoch_resume, save_epoch_freq, test_loader, epoch_label):
-    model = LSTMCycleGAN(log_dir=log_dir, device=device, lr=lr, beta1=beta1, lambda_idt=lambda_idt,
+    model = Conv3dCycleGAN(log_dir=log_dir, device=device, lr=lr, beta1=beta1, lambda_idt=lambda_idt,
                          lambda_A=lambda_A, lambda_B=lambda_B, lambda_mask=lambda_mask,
                          batch_size=batch_size_test, window_size=window_size, step_size=step_size, mode_train=False)
     model.log_dir = log_dir
@@ -132,7 +131,7 @@ if __name__ == '__main__':
     lambda_mask = 0.0
 
     # files, dirs
-    log_dir = 'logs_lstm_cyclegan'
+    log_dir = 'logs_conv3d_cyclegan_B9'
 
     # gpu
     device = torch.device("cuda:0" if torch.cuda.is_available else "cpu")
@@ -150,7 +149,7 @@ if __name__ == '__main__':
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size_test, shuffle=True)
 
     # test
-    epoch_label = 'epoch10'
+    epoch_label = 'epoch1'
 
     test(log_dir, device, lr, beta1, lambda_idt, lambda_A, lambda_B, lambda_mask,
          batch_size_test, window_size, step_size,

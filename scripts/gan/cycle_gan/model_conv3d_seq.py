@@ -15,12 +15,12 @@ import time
 import cv2
 
 from model_base import Generator, Discriminator, LSTMGenerator_A, LSTMGenerator_B, \
-    Conv3dGenerator, Conv3dDiscriminator, FrameDiscriminator_A, FrameDiscriminator_B
+    Conv3dGenerator, Conv3dDiscriminator, FrameDiscriminator
 
 
-class LSTMCycleGAN(object):
+class Conv3dCycleGAN(object):
 
-    def __init__(self, log_dir='logs_lstm_cyclegan', device='cuda:0', lr=0.0002, beta1=0.5, lambda_idt=5, lambda_A=10.0,
+    def __init__(self, log_dir='logs_conv3d_cyclegan', device='cuda:0', lr=0.0002, beta1=0.5, lambda_idt=5, lambda_A=10.0,
                  lambda_B=10.0, lambda_mask=10.0, batch_size=4, window_size=48, step_size=8, mode_train=True):
         self.lr = lr
         self.beta1 = beta1
@@ -33,29 +33,28 @@ class LSTMCycleGAN(object):
         else:
             self.gpu_ids = [0]
 
-        self.netG_A = LSTMGenerator_A(self.batch_size, self.window_size, self.step_size, self.device).to('cuda:0')
-        self.netG_B = LSTMGenerator_B(self.batch_size, self.window_size, self.step_size, self.device).to('cuda:1')
-        self.netD_A_seq = LSTMDiscriminator_A(self.batch_size, self.window_size, self.step_size, self.device).to('cuda:0')
-        self.netD_B_seq = LSTMDiscriminator_B(self.batch_size, self.window_size, self.step_size, self.device).to('cuda:1')
-        self.netD_A_frame = FrameDiscriminator_A(self.batch_size, self.window_size, self.step_size).to('cuda:0')
-        self.netD_B_frame = FrameDiscriminator_B(self.batch_size, self.window_size, self.step_size).to('cuda:1')
+        self.netG_A = Conv3dGenerator().to(self.device)
+        self.netG_B = Conv3dGenerator().to(self.device)
+        self.netD_A_seq = Conv3dDiscriminator().to(self.device)
+        self.netD_B_seq = Conv3dDiscriminator().to(self.device)
+        self.netD_A_frame = FrameDiscriminator(self.batch_size, self.window_size, self.step_size).to(self.device)
+        self.netD_B_frame = FrameDiscriminator(self.batch_size, self.window_size, self.step_size).to(self.device)
 
         print(torch.cuda.is_available())
 
         # multi-GPUs
-        # self.netG_A = torch.nn.DataParallel(self.netG_A, self.gpu_ids)
-        # self.netG_B = torch.nn.DataParallel(self.netG_B, self.gpu_ids)
-        # self.netD_A_seq = torch.nn.DataParallel(self.netD_A_seq, self.gpu_ids)
-        # self.netD_B_seq = torch.nn.DataParallel(self.netD_B_seq, self.gpu_ids)
-        # self.netD_A_individual = torch.nn.DataParallel(self.netD_A_individual, self.gpu_ids)
-        # self.netD_B_individual = torch.nn.DataParallel(self.netD_B_individual, self.gpu_ids)
+        self.netG_A = torch.nn.DataParallel(self.netG_A, self.gpu_ids)
+        self.netG_B = torch.nn.DataParallel(self.netG_B, self.gpu_ids)
+        self.netD_A_seq = torch.nn.DataParallel(self.netD_A_seq, self.gpu_ids)
+        self.netD_B_seq = torch.nn.DataParallel(self.netD_B_seq, self.gpu_ids)
+        self.netD_A_frame = torch.nn.DataParallel(self.netD_A_frame, self.gpu_ids)
+        self.netD_B_frame = torch.nn.DataParallel(self.netD_B_frame, self.gpu_ids)
 
         self.seq_fake_A_pool = ImagePool(50)
         self.seq_fake_B_pool = ImagePool(50)
 
         # targetが本物か偽物かで代わるのでオリジナルのGANLossクラスを作成
         self.criterionGAN = GANLoss(self.device)
-        self.criterionBCE = torch.nn.BCELoss()
         self.criterionCycle = torch.nn.L1Loss()
         self.criterionIdt = torch.nn.L1Loss()
         self.criterionMask = MASKLoss(self.device)
@@ -75,14 +74,14 @@ class LSTMCycleGAN(object):
             betas=(self.beta1, 0.999))
         self.optimizer_D_A_seq = torch.optim.Adam(self.netD_A_seq.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
         self.optimizer_D_B_seq = torch.optim.Adam(self.netD_B_seq.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
-        self.optimizer_D_A_individual = torch.optim.Adam(self.netD_A_frame.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
-        self.optimizer_D_B_individual = torch.optim.Adam(self.netD_B_frame.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
+        self.optimizer_D_A_frame = torch.optim.Adam(self.netD_A_frame.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
+        self.optimizer_D_B_frame = torch.optim.Adam(self.netD_B_frame.parameters(), lr=self.lr, betas=(self.beta1, 0.999))
         self.optimizers = []
         self.optimizers.append(self.optimizer_G)
         self.optimizers.append(self.optimizer_D_A_seq)
         self.optimizers.append(self.optimizer_D_B_seq)
-        self.optimizers.append(self.optimizer_D_A_individual)
-        self.optimizers.append(self.optimizer_D_B_individual)
+        self.optimizers.append(self.optimizer_D_A_frame)
+        self.optimizers.append(self.optimizer_D_B_frame)
 
         self.log_dir = log_dir
         if not os.path.exists(self.log_dir):
@@ -99,14 +98,18 @@ class LSTMCycleGAN(object):
 
     def backward_G(self, seq_real_A, seq_real_B, seq_real_A_mask):  # seq_real_A_mask
         # LSTMGeneratorに関連するlossと勾配計算処理
+        ################################################################################################################
+        # at sequence level
 
         # sequence loss D_A(G_A(A))
         seq_fake_B = self.netG_A(seq_real_A)
+
         pred_seq_fake_B = self.netD_A_seq(seq_fake_B)
         loss_G_A_seq = self.criterionGAN(pred_seq_fake_B, True)
 
         # sequence loss D_B(G_A(B))
         seq_fake_A = self.netG_B(seq_real_B)
+
         pred_seq_fake_A = self.netD_B_seq(seq_fake_A)
         loss_G_B_seq = self.criterionGAN(pred_seq_fake_A, True)
 
@@ -117,7 +120,7 @@ class LSTMCycleGAN(object):
 
         # backward sequence cycle loss
         seq_rec_B = self.netG_A(seq_fake_A)
-        loss_cycle_B_seq = self.criterionCycle(seq_rec_B, seq_fake_A) * self.lambda_seq_B
+        loss_cycle_B_seq = self.criterionCycle(seq_rec_B, seq_real_B) * self.lambda_seq_B
 
         # sequence identity loss
         # TODO: idt_Aの命名はよくない気がする idt_Bの方が適切では？
@@ -126,6 +129,17 @@ class LSTMCycleGAN(object):
 
         seq_idt_B = self.netG_B(seq_real_A)
         loss_idt_B_seq = self.criterionIdt(seq_idt_B, seq_real_A) * self.lambda_idt
+
+        ################################################################################################################
+        # at frame level
+
+        # sequence to individuals
+
+        pred_fake_B = self.netD_A_frame(seq_fake_B)
+        loss_G_A_frame = self.criterionGAN(pred_fake_B, True)
+
+        pred_fake_A = self.netD_B_frame(seq_fake_A)
+        loss_G_B_frame = self.criterionGAN(pred_fake_A, True)
 
         ################################################################################################################
         # # mse for mase as a new loss function / [int(batch_size), int(window_size / step_size), 3, 128, 256]
@@ -139,16 +153,18 @@ class LSTMCycleGAN(object):
         ################################################################################################################
         # combined loss
         loss_G = loss_G_A_seq + loss_G_B_seq + loss_cycle_A_seq + loss_cycle_B_seq + \
-                 loss_idt_A_seq + loss_idt_B_seq + loss_mask
+                 loss_idt_A_seq + loss_idt_B_seq + loss_G_A_frame + loss_G_B_frame + loss_mask  # + loss_mask
         loss_G.backward()
 
         # 次のDiscriminatorの更新でfake画像が必要なので一緒に返す
         return loss_G_A_seq.data, loss_G_B_seq.data, loss_cycle_A_seq.data, loss_cycle_B_seq.data, \
-               loss_idt_A_seq.data, loss_idt_B_seq.data, seq_fake_A.data, seq_fake_B.data, loss_mask.data  # loss_mask.data
+               loss_idt_A_seq.data, loss_idt_B_seq.data, loss_G_A_frame.data, loss_G_A_frame.data, \
+               seq_fake_A.data, seq_fake_B.data, loss_mask.data  # loss_mask.data
 
     def backward_D_A(self, seq_real_B, seq_fake_B):
         # ドメインAから生成したfake_Bが本物か偽物か見分ける
-        # sequence
+        ################################################################################################################
+        # at sequence level
 
         # fake_Bを直接使わずに過去に生成した偽画像から新しくランダムサンプリングしている？
         seq_fake_B = self.seq_fake_B_pool.query(seq_fake_B)
@@ -166,7 +182,7 @@ class LSTMCycleGAN(object):
         loss_D_A_seq = (loss_D_seq_real + loss_D_seq_fake) * 0.5
 
         ################################################################################################################
-        # individuals
+        # at frame level
 
         # 本物画像を入れたときは本物と認識するほうがよい  sequence to individuals
         pred_real = self.netD_A_frame(seq_real_B)
@@ -178,18 +194,19 @@ class LSTMCycleGAN(object):
         loss_D_fake = self.criterionGAN(pred_fake, False)
 
         # combined loss
-        loss_D_A = (loss_D_real + loss_D_fake) * 0.5
+        loss_D_A_frame = (loss_D_real + loss_D_fake) * 0.5
 
         ################################################################################################################
         # combined all losses
-        loss_D_A_all = loss_D_A_seq + loss_D_A
+        loss_D_A_all = loss_D_A_seq + loss_D_A_frame
         loss_D_A_all.backward()
 
-        return loss_D_A_seq.data, loss_D_A.data
+        return loss_D_A_seq.data, loss_D_A_frame.data
 
     def backward_D_B(self, seq_real_A, seq_fake_A):
         # ドメインBから生成したfake_Aが本物か偽物か見分ける
-        # sequence
+        ################################################################################################################
+        # at sequence level
 
         seq_fake_A = self.seq_fake_A_pool.query(seq_fake_A)
 
@@ -205,7 +222,7 @@ class LSTMCycleGAN(object):
         loss_D_B_seq = (loss_D_seq_real + loss_D_seq_fake) * 0.5
 
         ################################################################################################################
-        # individuals
+        # at frame level
 
         # 本物画像を入れたときは本物と認識するほうがよい
         pred_real = self.netD_B_frame(seq_real_A)
@@ -216,39 +233,43 @@ class LSTMCycleGAN(object):
         loss_D_fake = self.criterionGAN(pred_fake, False)
 
         # combined loss
-        loss_D_B = (loss_D_real + loss_D_fake) * 0.5
+        loss_D_B_frame = (loss_D_real + loss_D_fake) * 0.5
 
         ################################################################################################################
         # combined all losses
-        loss_D_B_all = loss_D_B_seq + loss_D_B
+        loss_D_B_all = loss_D_B_seq + loss_D_B_frame
         loss_D_B_all.backward()
 
-        return loss_D_B_seq.data, loss_D_B.data
+        return loss_D_B_seq.data, loss_D_B_frame.data
 
     def optimize(self):
 
         # update Generator (G_A and G_B)
         self.optimizer_G.zero_grad()
         loss_G_A_seq, loss_G_B_seq, loss_cycle_A_seq, loss_cycle_B_seq, \
-        loss_idt_A_seq, loss_idt_B_seq, seq_fake_A, seq_fake_B, loss_mask \
-            = self.backward_G(self.seq_real_A, self.seq_real_B, self.seq_real_A_mask)  # loss_mask & # self.seq_real_mask_A
+        loss_idt_A_seq, loss_idt_B_seq, loss_G_A_frame, loss_G_B_frame, \
+        seq_fake_A, seq_fake_B, loss_mask \
+            = self.backward_G(self.seq_real_A, self.seq_real_B, self.seq_real_A_mask)  # loss_mask & # self.seq_real_A_mask
         self.optimizer_G.step()
 
         # update D_A
         self.optimizer_D_A_seq.zero_grad()
-        loss_D_A_seq, loss_D_A = self.backward_D_A(self.seq_real_B, seq_fake_B)
+        loss_D_A_seq, loss_D_A_frame = self.backward_D_A(self.seq_real_B, seq_fake_B)
         self.optimizer_D_A_seq.step()
 
         # update D_B
         self.optimizer_D_B_seq.zero_grad()
-        loss_D_B_seq, loss_D_B = self.backward_D_B(self.seq_real_A, seq_fake_A)
+        loss_D_B_seq, loss_D_B_frame = self.backward_D_B(self.seq_real_A, seq_fake_A)
         self.optimizer_D_B_seq.step()
 
-        ret_loss = [loss_G_A_seq, loss_D_A_seq,
-                    loss_G_B_seq, loss_D_B_seq,
+        ret_loss = [loss_G_A_seq, loss_G_B_seq,
                     loss_cycle_A_seq, loss_cycle_B_seq,
-                    loss_D_A, loss_D_B,
                     loss_idt_A_seq, loss_idt_B_seq,
+                    loss_G_A_frame, loss_G_B_frame,
+
+                    loss_D_A_seq, loss_D_B_seq,
+                    loss_D_A_frame, loss_D_B_frame,
+
                     loss_mask
                     ]  # loss_mask
 
@@ -260,8 +281,10 @@ class LSTMCycleGAN(object):
                                  0.0, 0.0,
                                  0.0, 0.0,
                                  0.0, 0.0,
+                                 0.0, 0.0,
                                  0.0
                                  ])
+
         time_list = []
         for batch_idx, data in enumerate(data_loader):
 
@@ -286,6 +309,12 @@ class LSTMCycleGAN(object):
         save_filename = '{}_net_{}.pth'.format(epoch_label, network_label)
         save_path = os.path.join(self.log_dir, save_filename)
 
+        # GPUで動いている場合はCPUに移してから保存
+        # これやっておけばCPUでモデルをロードしやすくなる？
+        torch.save(network.cpu().state_dict(), save_path)
+        # GPUに戻す
+        network.to(self.device)
+
         #         torch.save({'epoch': epoch_label,
         #                     'model_state_dict': network.cpu().state_dict(),
         #                     'optimizer_state_dict': optimizer.cpu().state_dict(),
@@ -293,14 +322,10 @@ class LSTMCycleGAN(object):
         #         # GPUに戻す
         #         network.to(device)
 
-        # GPUで動いている場合はCPUに移してから保存
-        # これやっておけばCPUでモデルをロードしやすくなる？
-        torch.save(network.cpu().state_dict(), save_path)
-        # GPUに戻す
-        if network is self.netG_A or network is self.netD_A_seq or network is self.netD_A_frame:
-            network.to('cuda:0')
-        else:
-            network.to('cuda:1')
+        # if network is self.netG_A or network is self.netD_A_seq or network is self.netD_A_frame:
+        #     network.to('cuda:0')
+        # else:
+        #     network.to('cuda:1')
 
     def load_network(self, network, network_label, epoch_label):
         load_filename = '{}_net_{}.pth'.format(epoch_label, network_label)
@@ -311,18 +336,18 @@ class LSTMCycleGAN(object):
 
     def save(self, label):
         self.save_network(self.netG_A, 'G_A', label)
-        self.save_network(self.netD_A_seq, 'D_A_sequence', label)
+        self.save_network(self.netD_A_seq, 'D_A_seq', label)
         self.save_network(self.netD_A_frame, 'D_A_frame', label)
         self.save_network(self.netG_B, 'G_B', label)
-        self.save_network(self.netD_B_seq, 'D_B_sequence', label)
+        self.save_network(self.netD_B_seq, 'D_B_seq', label)
         self.save_network(self.netD_B_frame, 'D_B_frame', label)
 
     def load(self, label):
         self.load_network(self.netG_A, 'G_A', label)
-        self.load_network(self.netD_A_seq, 'D_A_sequence', label)
+        self.load_network(self.netD_A_seq, 'D_A_seq', label)
         self.load_network(self.netD_A_frame, 'D_A_frame', label)
         self.load_network(self.netG_B, 'G_B', label)
-        self.load_network(self.netD_B_seq, 'D_B_sequence', label)
+        self.load_network(self.netD_B_seq, 'D_B_seq', label)
         self.load_network(self.netD_B_frame, 'D_B_frame', label)
 
 
